@@ -1,0 +1,17 @@
+Modeling Tools - fetchniche
+
+data_tools.py - 处理数据 - 2021.4.19 创建
+    - plot3d - 三维数据可视化 - 2021.4.19 添加
+
+file_reader.py - 读取&处理文件 - 2021.4.24 创建
+    - DataFetcher - 文件处理类 - 2021.4.24 添加
+
+deep_learning - 神经网络相关 - 2021.4.19 创建
+    - net_cal.py - 用于计算神经网络中的参数，如卷积后的图片尺寸 - 2021.4.19 创建
+        - padding_work - 通过已知量计算same_conv需要的padding数目 - 2021.4.19 添加
+        - outsize_pt - 通过已知的卷积参数计算输出尺寸 - 2021.4.19 添加
+    - networks.py - 用于创建各类神经网络 - 2021.4.19 创建
+        - Fetchnn - 创建神经网络 - 2021.4.28 修改
+
+iamge_process - 图像处理相关 - 2021.4.24 创建
+    - closecv.py - 将opencv中常用的操作化简 - 2021.4.24 创建
