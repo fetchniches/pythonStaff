@@ -1,16 +1,19 @@
 import os
 import glob
+import shutil
 import re
 
-def rename(folder: os.PathLike, offset: int, suffix: str = 'jpg'):
-    files_name = glob.glob(os.path.join(folder, '*.'+suffix))
+def rename(src: os.PathLike, dst: os.PathLike, offset: int, suffix: str = 'jpg'):
+    files_name = glob.glob(os.path.join(src, '*.'+suffix))
     success: int = 0
     for fn in files_name:
         try:
-            dst = str(int(re.search(r'\d*\.'+suffix+'$', fn).group()[:-4])+offset)+'.'+suffix
-            dst = os.path.join(folder, dst)
-            os.rename(fn, dst)
-            print(fn, '->', dst)
+            fname = str(int(re.search(r'\d*\.'+suffix+'$', fn).group()[:-4])+offset)+'.'+suffix
+            to_fn = os.path.join(dst, fname)
+            if os.path.exists(to_fn):
+                raise FileExistsError('file alread exists! Exit rename.')
+            shutil.copy(fn, to_fn)
+            print(fn, '->', to_fn)
             success += 1
         except Exception as e:
             print('File {} goes wrong, caused by {}'.format(fn, e))
