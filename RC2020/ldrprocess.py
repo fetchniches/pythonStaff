@@ -184,27 +184,29 @@ class CircleTemplate:
         """
         self.radius = radius
         self.grid_len = grid_len
-        self.kernel = np.zeros(
-            (round((1+dilate)*radius/grid_len), round(2*(1+dilate)*radius/grid_len)))
-        small_radius_on_grid = ceil((1-dilate)*radius/grid_len)
+        # 添加边界，以增大对直线型点的惩罚
+        self.kernel = -1 * np.ones(
+            (round((1+dilate)*radius/grid_len+ radius/grid_len), round(2*(1+dilate)*radius/grid_len+radius/grid_len)))
         # 1-dilate倍率的半径长度
-        row_bound = self.kernel.shape[0]
+        small_radius_on_grid = ceil((1-dilate)*radius/grid_len)
         # 循环中行的边界
-        col_bound = ceil(self.kernel.shape[1]/2)
+        row_bound = ceil(self.kernel.shape[0])
         # 循环中列的边界(取半)
+        col_bound = ceil(self.kernel.shape[1])
+        # 1+dilate与1-dilate对应倍率的半径
         max_radius_2, min_radius_2 = round(
             ((1+dilate)*radius/grid_len)**2), round(((1-dilate)*radius/grid_len)**2)
-        # 1+dilate与1-dilate对应倍率的半径
-        cirnum = 0
+        # 尝试搜索算法优化？dfs,bfs...
         for i in range(row_bound):
             for j in range(col_bound):
+                # 粗判断，减小计算量
                 if i < small_radius_on_grid/1.4142 and j > (col_bound-small_radius_on_grid/1.4142):
                     continue
                 elif min_radius_2 < ((j-row_bound)**2+i**2) < max_radius_2:
-                    cirnum += 1
                     self.kernel[i, j] = 1
-        self.kernel += np.fliplr(self.kernel)
-        # 初始化卷积核(下半圆形状)
+        # 翻转堆叠完圆
+        self.kernel = np.hstack((self.kernel, np.fliplr(self.kernel)))
+        self.kernel = np.vstack((np.flipud(self.kernel), self.kernel))
 
     def _points2grid(self, points: Array) -> Array:
         """将点划分进网格中，包含点的网格位置值为1
@@ -221,14 +223,18 @@ class CircleTemplate:
         # 获取边界
         self.max_row, self.max_col = int(
             (upperright[1]-bottomleft[1])//self.grid_len), int((upperright[0]-bottomleft[0])//self.grid_len)
+        # 创建网格
         grid = np.zeros((self.max_row, self.max_col))
         for point in points:
-            grid[int(self.max_row-(point[1]-bottomleft[1])//self.grid_len) -
-                 1, int((point[0]-bottomleft[0])//self.grid_len)-1] = 1
-        # 创建网格
+            # 原点会出现数值计算问题，直接避开
+            if point[0] != 0 and point[1] != 0:
+                # 从=1改为+=1累计点的数目减小grid_len带来的点的精度损失
+                grid[int(self.max_row-(point[1]-bottomleft[1])//self.grid_len) -
+                    1, int((point[0]-bottomleft[0])//self.grid_len)-1] += 1
+        
         return grid
 
-    def __call__(self, points: Array, min_score: Union[int, str] = 'decay') -> Array:
+    def __call__(self, points: Array) -> Array:
         """开始拟合圆
 
         - 参数:
@@ -239,45 +245,44 @@ class CircleTemplate:
             拟合圆的中心坐标列表
         """
         rcmsg = globalv.get_var('rcmsg')
-        convert = math.pi/180
+        convert = np.pi/180
         close_dist = self.radius // self.grid_len
-        estimate_dist = np.sqrt(points[:, 0].mean()**2+points[:, 1].mean()**2)
-        rcmsg.variable(estimate_dist)
-        if min_score == 'decay':
-            try:
-                self.min_score = int(2*math.asin(self.radius/estimate_dist)/convert/0.25)
-            except ValueError:
-                rcmsg.warning('Estimate distance error.')
-        else:
-            self.min_score = min_score
-        rcmsg.info('Current threshold : {}'.format(self.min_score))
         # 卷积匹配圆
         ret = cv.filter2D(self._points2grid(points), -1, self.kernel)
         # 可疑点
-        possible_points = []
-        # 通过阈值过滤点
-        for i in range(ret.shape[0]):
-            for j in range(ret.shape[1]):
-                if ret[i, j] <= self.min_score:
-                    possible_points.append((ret[i, j], i, j))
-        # 从大至小排序
-        possible_points = sorted(possible_points, key=lambda x: x[0], reverse=True)
+        # 通过阈值过滤点，耗时60ms，可尝试torch计算
+        i = np.arange(ret.shape[0])
+        j = np.arange(ret.shape[1])       
+        i = -((i+1-self.max_row)*self.grid_len-points[:, 1].min()+self.radius/2)
+        j = (j+1)*self.grid_len+points[:, 0].min()-self.radius
+        i, j = np.power(i, 2), np.power(j, 2)
+        i, j = np.repeat(i[:, np.newaxis], ret.shape[1], 1), np.repeat(j[np.newaxis, :], ret.shape[0], 0)
+        dist = np.sqrt(i + j)
+        pn = 2 * np.arcsin(self.radius/dist) / convert / 0.25 - 2
+        # clip at ten
+        pn[pn < 10] = 10
+        # -----------优化界限-----------
+        # 匹配分数筛选，此处排序后可增大精确度，0.8为可调参数
+        idxs = np.argwhere(ret >= pn*0.8)
+
         centers = []
         # 遍历所有可疑点
-        for point in possible_points:
+        for id in idxs:
+            point = id
             close = False
             # 判断两个圆心是否过近
             for pre_point in centers:
-                if point[1] - pre_point[0] < close_dist and point[2]-pre_point[1] < close_dist:
+                if point[0] - pre_point[0] < close_dist and point[1]-pre_point[1] < close_dist:
                     close = True
                     break
             if not close:
-                centers.append([point[1], point[2]])
+                centers.append([point[0], point[1]])
         if len(centers) == 0: 
             rcmsg.info('未找到圆')
             return centers
+        # 从网格中恢复坐标真实值
         centers = np.asarray(centers, dtype=np.float)
         centers[:, 0] = -((centers[:, 0]+1-self.max_row)*self.grid_len-points[:, 1].min()+self.radius/2)
         centers[:, 1] = (centers[:, 1]+1)*self.grid_len+points[:, 0].min()-self.radius
-        # 从网格中恢复坐标真实值
+        
         return centers
